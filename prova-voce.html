@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0B1020" />
+    <!-- Niente manifest dell'app: "Aggiungi a Home" deve aprire questa pagina, non l'app -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Prova voce" />
+    <title>Prova voce</title>
+    <style>
+      html, body { margin: 0; background: #0B1020; color: #E8ECF5; }
+      body {
+        font-family: -apple-system, system-ui, sans-serif;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        padding: 24px;
+        box-sizing: border-box;
+        text-align: center;
+      }
+      button {
+        width: 180px;
+        height: 180px;
+        border-radius: 50%;
+        border: 2px solid #C9D2E6;
+        background: #0B1020;
+        color: #E8ECF5;
+        font-size: 32px;
+        font-family: inherit;
+        -webkit-tap-highlight-color: transparent;
+      }
+      button:disabled { opacity: 0.4; }
+      #frase { font-size: 24px; min-height: 1.4em; margin: 0; }
+      .secondario { color: #9AA4BD; font-size: 18px; margin: 0; }
+    </style>
+  </head>
+  <body>
+    <button id="parla" type="button">Parla</button>
+    <p id="frase"></p>
+    <p id="stato" class="secondario"></p>
+    <p id="tempo" class="secondario"></p>
+    <p id="modo" class="secondario"></p>
+    <script>
+      (function () {
+        var bottone = document.getElementById('parla');
+        var frase = document.getElementById('frase');
+        var stato = document.getElementById('stato');
+        var tempo = document.getElementById('tempo');
+        var modo = document.getElementById('modo');
+
+        var installata = window.navigator.standalone === true ||
+          (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+        modo.textContent = installata ? 'installata' : 'nel browser';
+
+        var Riconoscimento = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!Riconoscimento) {
+          stato.textContent = 'non disponibile';
+          bottone.disabled = true;
+          return;
+        }
+        stato.textContent = 'disponibile';
+
+        var inizio = 0;
+        var concluso = false;
+
+        function mostraTempo() {
+          var secondi = (performance.now() - inizio) / 1000;
+          tempo.textContent = secondi.toFixed(1).replace('.', ',') + ' s';
+        }
+
+        bottone.addEventListener('click', function () {
+          var rec = new Riconoscimento();
+          rec.lang = 'it-IT';
+          rec.continuous = false;
+          rec.interimResults = false;
+
+          rec.onresult = function (event) {
+            concluso = true;
+            mostraTempo();
+            frase.textContent = event.results[0][0].transcript;
+            stato.textContent = 'disponibile';
+          };
+          rec.onerror = function (event) {
+            concluso = true;
+            mostraTempo();
+            stato.textContent = 'errore: ' + event.error;
+          };
+          function nessunRisultato() {
+            concluso = true;
+            mostraTempo();
+            stato.textContent = 'nessun risultato';
+          }
+          rec.onnomatch = nessunRisultato;
+          rec.onend = function () {
+            bottone.disabled = false;
+            if (!concluso) {
+              nessunRisultato();
+            }
+          };
+
+          concluso = false;
+          frase.textContent = '';
+          tempo.textContent = '';
+          stato.textContent = 'in ascolto…';
+          inizio = performance.now();
+          try {
+            rec.start();
+            bottone.disabled = true;
+          } catch (e) {
+            concluso = true;
+            mostraTempo();
+            stato.textContent = 'errore: ' + (e && e.name ? e.name : String(e));
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>
