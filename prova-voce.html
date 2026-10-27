@@ -36,6 +36,7 @@
       button:disabled { opacity: 0.4; }
       #frase { font-size: 24px; min-height: 1.4em; margin: 0; }
       .secondario { color: #9AA4BD; font-size: 18px; margin: 0; }
+      #eventi { font-size: 15px; line-height: 1.5; max-width: 100%; overflow-wrap: anywhere; }
     </style>
   </head>
   <body>
@@ -44,6 +45,7 @@
     <p id="stato" class="secondario"></p>
     <p id="tempo" class="secondario"></p>
     <p id="modo" class="secondario"></p>
+    <p id="eventi" class="secondario"></p>
     <script>
       (function () {
         var bottone = document.getElementById('parla');
@@ -64,56 +66,127 @@
         }
         stato.textContent = 'disponibile';
 
-        var inizio = 0;
-        var concluso = false;
+        var eventi = document.getElementById('eventi');
 
-        function mostraTempo() {
-          var secondi = (performance.now() - inizio) / 1000;
-          tempo.textContent = secondi.toFixed(1).replace('.', ',') + ' s';
+        // Una sessione per ogni tocco su "Parla"; gli eventi tardivi di una
+        // sessione chiusa finiscono solo nel registro, non cambiano lo stato.
+        var corrente = null;
+
+        function secondiDa(s) {
+          return ((performance.now() - s.inizio) / 1000).toFixed(1).replace('.', ',');
         }
 
-        bottone.addEventListener('click', function () {
+        function registra(s, nome) {
+          if (corrente !== s) return;
+          s.registro.push(nome + ' ' + secondiDa(s));
+          eventi.textContent = s.registro.join(' · ');
+        }
+
+        function mostraTempo(s) {
+          tempo.textContent = secondiDa(s) + ' s';
+        }
+
+        function chiudi(s) {
+          s.attiva = false;
+          clearTimeout(s.timer);
+          bottone.textContent = 'Parla';
+        }
+
+        function nessunRisultato(s) {
+          s.concluso = true;
+          mostraTempo(s);
+          stato.textContent = 'nessun risultato';
+        }
+
+        function ferma(s) {
+          if (s.fermata) return;
+          s.fermata = true;
+          registra(s, 'stop');
+          try { s.rec.stop(); } catch (e) { registra(s, 'stop:' + e.name); }
+          // iOS a volte non risponde più: dopo 3 s si interrompe.
+          s.timer = setTimeout(function () {
+            if (!s.attiva) return;
+            if (!s.concluso) nessunRisultato(s);
+            chiudi(s);
+            registra(s, 'abort');
+            try { s.rec.abort(); } catch (e) { registra(s, 'abort:' + e.name); }
+          }, 3000);
+        }
+
+        function parla() {
           var rec = new Riconoscimento();
           rec.lang = 'it-IT';
           rec.continuous = false;
-          rec.interimResults = false;
+          rec.interimResults = true;
+          var s = { rec: rec, inizio: performance.now(), registro: [],
+                    attiva: true, concluso: false, fermata: false, timer: null };
+          corrente = s;
+
+          ['audiostart', 'soundstart', 'speechstart', 'speechend', 'soundend', 'audioend']
+            .forEach(function (nome) {
+              rec.addEventListener(nome, function () { registra(s, nome); });
+            });
 
           rec.onresult = function (event) {
-            concluso = true;
-            mostraTempo();
-            frase.textContent = event.results[0][0].transcript;
-            stato.textContent = 'disponibile';
-          };
-          rec.onerror = function (event) {
-            concluso = true;
-            mostraTempo();
-            stato.textContent = 'errore: ' + event.error;
-          };
-          function nessunRisultato() {
-            concluso = true;
-            mostraTempo();
-            stato.textContent = 'nessun risultato';
-          }
-          rec.onnomatch = nessunRisultato;
-          rec.onend = function () {
-            bottone.disabled = false;
-            if (!concluso) {
-              nessunRisultato();
+            registra(s, 'result');
+            if (!s.attiva) return;
+            var parti = [];
+            var definitiva = false;
+            for (var i = 0; i < event.results.length; i++) {
+              var parte = event.results[i][0].transcript;
+              if (event.results[i].isFinal) {
+                parte += ' (definitiva)';
+                definitiva = true;
+              }
+              parti.push(parte);
+            }
+            frase.textContent = parti.join(' ');
+            if (definitiva) {
+              s.concluso = true;
+              clearTimeout(s.timer);
+              mostraTempo(s);
+              stato.textContent = 'disponibile';
             }
           };
+          rec.onnomatch = function () {
+            registra(s, 'nomatch');
+            if (s.attiva) nessunRisultato(s);
+          };
+          rec.onerror = function (event) {
+            registra(s, 'error:' + event.error);
+            if (!s.attiva) return;
+            s.concluso = true;
+            mostraTempo(s);
+            stato.textContent = 'errore: ' + event.error;
+          };
+          rec.onend = function () {
+            registra(s, 'end');
+            if (!s.attiva) return;
+            if (!s.concluso) nessunRisultato(s);
+            chiudi(s);
+          };
 
-          concluso = false;
           frase.textContent = '';
           tempo.textContent = '';
+          eventi.textContent = '';
           stato.textContent = 'in ascolto…';
-          inizio = performance.now();
+          bottone.textContent = 'Ferma';
           try {
             rec.start();
-            bottone.disabled = true;
           } catch (e) {
-            concluso = true;
-            mostraTempo();
+            registra(s, 'start:' + e.name);
+            s.concluso = true;
+            mostraTempo(s);
             stato.textContent = 'errore: ' + (e && e.name ? e.name : String(e));
+            chiudi(s);
+          }
+        }
+
+        bottone.addEventListener('click', function () {
+          if (corrente && corrente.attiva) {
+            ferma(corrente);
+          } else {
+            parla();
           }
         });
       })();
